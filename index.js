@@ -2,110 +2,126 @@ require('dotenv').config();
 const { Telegraf, Markup, session } = require('telegraf');
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
-const TARGET = process.env.CHANNEL_ID;              // -100… or @channel_username
-const CHANNEL_USERNAME = (''+TARGET).startsWith('@') ? (''+TARGET).slice(1) : null;
+const TARGET = process.env.CHANNEL_ID; // -100… or @channel_username
 
-// Simple per-user memory (resets when the bot restarts)
+// Derive a clickable link to the copied post when possible
+function linkForChannelMessage(channelId, messageId) {
+  if (!channelId || !messageId) return '';
+  // public channel like @Moments_files
+  if (String(channelId).startsWith('@')) {
+    const username = String(channelId).slice(1);
+    return `https://t.me/${username}/${messageId}`;
+  }
+  // private numeric id like -1001234567890 -> t.me/c/1234567890/42
+  const m = String(channelId).match(/-100(\d+)/);
+  if (m) return `https://t.me/c/${m[1]}/${messageId}`;
+  return '';
+}
+
+// --- sessions to remember the last submission while we ask for IG handle ---
 bot.use(session());
 
-function askTagQuestion(ctx) {
-  return ctx.reply(
+const askTag = (ctx) =>
+  ctx.reply(
     'آیا مایلید در ریل/پست اینستاگرام تگ شوید؟',
     Markup.inlineKeyboard([
       [Markup.button.callback('بله، تگم کن', 'tag_yes'),
-       Markup.button.callback('نه، نیاز نیست', 'tag_no')]
+       Markup.button.callback('نه، لازم نیست', 'tag_no')],
     ])
   );
-}
 
-bot.start((ctx) => ctx.reply(
-  '👋 خوش آمدید!\n\nلطفاً ویدیوهای خود را با بالاترین کیفیت و ترجیحاً به صورت فایل ارسال کنید.'
-));
+// Greeting
+bot.start((ctx) =>
+  ctx.reply(
+    '👋 خوش آمدید!\n\nلطفاً ویدیوهای خود را با بالاترین کیفیت و ترجیحاً به صورت فایل ارسال کنید.'
+  )
+);
 
-// Handle photos / videos / media documents
+// Accept photos, videos, or documents (video/image)
 bot.on(['video', 'photo', 'document'], async (ctx) => {
   try {
     const msg = ctx.message;
+
     const isPhoto = Boolean(msg.photo && msg.photo.length);
     const isVideo = Boolean(msg.video);
     const doc = msg.document;
     const mt = (doc && doc.mime_type) || '';
     const isMediaDoc = doc && (mt.startsWith('video/') || mt.startsWith('image/'));
+
     if (!(isPhoto || isVideo || isMediaDoc)) return;
 
-    // Copy media to your channel and remember the new message_id there
-    const copyRes = await ctx.copyMessage(TARGET);  // returns { message_id }
+    // Copy to your channel
+    const copyRes = await ctx.copyMessage(TARGET); // { message_id }
     const channelMessageId = copyRes.message_id;
 
-    // Save context for this user so we can tie the IG handle to this media
-    ctx.session.lastSubmission = { channelMessageId, ts: Date.now() };
+    // Remember this submission for IG tagging step
+    ctx.session.lastSubmission = {
+      channelMessageId,
+      from: ctx.from,
+      at: Date.now(),
+    };
 
-    // Thank them & ask about tagging
     await ctx.reply('✔️ دریافت شد');
-    await askTagQuestion(ctx);
-
+    await askTag(ctx);
   } catch (err) {
     console.error('Copy error:', err);
     await ctx.reply('❌ مشکلی پیش آمد، دوباره تلاش کنید.');
   }
 });
 
-// User tapped "Yes"
+// Button: YES → ask for IG handle
 bot.action('tag_yes', async (ctx) => {
   await ctx.answerCbQuery();
   ctx.session.awaitingIg = true;
-  return ctx.editMessageText(
-    'عالی! لطفاً آیدی اینستاگرام‌تان را تایپ کنید (مثلاً @example).'
-  );
+  await ctx.editMessageText('عالی! لطفاً آیدی اینستاگرام‌تان را ارسال کنید (مثال: @example).');
 });
 
-// User tapped "No"
+// Button: NO → log “no tag”
 bot.action('tag_no', async (ctx) => {
   await ctx.answerCbQuery();
   ctx.session.awaitingIg = false;
   await ctx.editMessageText('باشه، بدون تگ منتشر می‌شود. متشکرم 🙏');
 
-  // (optional) log a small note next to the media in your channel
+  // Optional: note in channel next to the media
   const sub = ctx.session.lastSubmission;
   if (sub?.channelMessageId) {
-    const link = CHANNEL_USERNAME ? `https://t.me/${CHANNEL_USERNAME}/${sub.channelMessageId}` : '';
+    const link = linkForChannelMessage(TARGET, sub.channelMessageId);
+    const from = ctx.from?.username ? '@' + ctx.from.username : ctx.from?.id;
     await ctx.telegram.sendMessage(
       TARGET,
-      `ℹ️ ارسال بدون تگ از ${ctx.from.username ? '@'+ctx.from.username : ctx.from.id}${link ? `\n🔗 ${link}` : ''}`
+      `ℹ️ ارسال بدون تگ از ${from}${link ? `\n🔗 ${link}` : ''}`
     );
   }
 });
 
-// Capture the IG handle text
+// If user sends text while we're waiting for IG handle, capture & validate it
 bot.on('text', async (ctx) => {
   if (!ctx.session.awaitingIg) return;
 
   let handle = (ctx.message.text || '').trim();
-  // Normalize and validate
-  if (handle.startsWith('https://www.instagram.com/')) handle = handle.replace('https://www.instagram.com/','');
-  if (handle.startsWith('https://instagram.com/')) handle = handle.replace('https://instagram.com/','');
-  handle = handle.replace(/\/+$/,''); // drop trailing slash
+  // Normalize common paste forms
+  handle = handle
+    .replace(/^https?:\/\/(www\.)?instagram\.com\//i, '')
+    .replace(/\/+$/g, '');
   if (!handle.startsWith('@')) handle = '@' + handle;
 
+  // Basic IG handle validation
   const ok = /^@[A-Za-z0-9._]{1,30}$/.test(handle);
   if (!ok) {
-    return ctx.reply('فرمت آیدی صحیح نیست. لطفاً چیزی مثل @example بفرستید.');
+    return ctx.reply('فرمت آیدی درست نیست. لطفاً چیزی مثل @example ارسال کنید.');
   }
 
   ctx.session.awaitingIg = false;
-
-  // Confirm to the user
   await ctx.reply(`متشکرم! آیدی شما ثبت شد: ${handle}`);
 
-  // Post a note in your channel linking the media & IG handle
+  // Post a note in your channel, linked to the copied media
   const sub = ctx.session.lastSubmission;
-  const link = (CHANNEL_USERNAME && sub?.channelMessageId)
-    ? `\n🔗 https://t.me/${CHANNEL_USERNAME}/${sub.channelMessageId}`
-    : '';
+  const link = sub?.channelMessageId ? linkForChannelMessage(TARGET, sub.channelMessageId) : '';
+  const from = ctx.from?.username ? '@' + ctx.from.username : ctx.from?.id;
 
   await ctx.telegram.sendMessage(
     TARGET,
-    `🔖 تگ اینستاگرام: ${handle}\n👤 تلگرام: ${ctx.from.username ? '@'+ctx.from.username : ctx.from.id}${link}`
+    `🔖 تگ اینستاگرام: ${handle}\n👤 تلگرام: ${from}${link ? `\n🔗 ${link}` : ''}`
   );
 });
 
