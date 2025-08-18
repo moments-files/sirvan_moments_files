@@ -24,7 +24,6 @@ const setState = (ctx, patch) => {
 const LRI = '\u2066'; // LEFT-TO-RIGHT ISOLATE
 const PDI = '\u2069'; // POP DIRECTIONAL ISOLATE
 const ltr = (s) => `${LRI}${s}${PDI}`;
-const ZWSP = '\u200B'; // zero-width space
 
 // Build public link to a copied message in channel
 function linkForChannelMessage(channelId, messageId) {
@@ -50,7 +49,7 @@ bot.start((ctx) =>
 );
 
 // Handle media (photos, videos, or image/video documents)
-// IMPORTANT: we DO NOT copy to channel yet — we store msg id and ask tagging first
+// We DO NOT copy to channel yet — store msg id and ask tagging first
 bot.on(['video', 'photo', 'document'], async (ctx) => {
   const msg = ctx.message;
   const isPhoto = Boolean(msg.photo && msg.photo.length);
@@ -66,8 +65,8 @@ bot.on(['video', 'photo', 'document'], async (ctx) => {
     awaitingIg: false
   });
 
-  try { await ctx.reply('✔️ دریافت شد'); } catch (e) { /* non-fatal */ }
-  try { await askTag(ctx); } catch (e) { /* non-fatal */ }
+  try { await ctx.reply('✔️ دریافت شد'); } catch {}
+  try { await askTag(ctx); } catch {}
 });
 
 // If user chooses NO → copy media now, log note, done
@@ -120,21 +119,18 @@ bot.on('text', async (ctx) => {
 
   const valid = /^@[A-Za-z0-9._]{1,20}$/.test(handle);
 
+  // Always thank the user, never echo the handle (stealth)
+  try { await ctx.reply('متشکرم! آیدی شما با موفقیت ثبت شد 🙏'); } catch {}
+
   if (!valid) {
-    // SHADOW-DROP: pretend okay, but don't copy to channel; show a visually-normal (obfuscated) handle
-    const fake = '@' + ZWSP + handle.slice(1); // inject zero-width space after @
-    try { await ctx.reply(`متشکرم! آیدی شما ثبت شد: ${ltr(fake)}`); } catch {}
-    // clear pending so nothing gets forwarded
+    // SHADOW-DROP: do NOT copy anything; clear pending
     setState(ctx, { awaitingIg: false, pending: null });
     return;
   }
 
-  // Valid handle → copy to channel now, then log tag note
+  // Valid handle → copy to channel now, then log tag note (with real handle in channel)
   setState(ctx, { awaitingIg: false });
   const pending = getState(ctx)?.pending;
-
-  try { await ctx.reply(`متشکرم! آیدی شما ثبت شد: ${ltr(handle)}`); } catch {}
-
   if (pending) {
     try {
       const copy = await ctx.telegram.copyMessage(TARGET, pending.fromChatId, pending.msgId);
