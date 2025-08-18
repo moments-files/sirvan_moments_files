@@ -60,7 +60,6 @@ bot.on(['video', 'photo', 'document'], async (ctx) => {
     channelMessageId = res.message_id;
   } catch (err) {
     console.error('COPY FAILED:', err);
-    // typical reasons: wrong CHANNEL_ID, bot not admin
     await ctx.reply('❌ مشکلی پیش آمد، دوباره تلاش کنید.');
     return;
   }
@@ -68,7 +67,7 @@ bot.on(['video', 'photo', 'document'], async (ctx) => {
   // 2) Remember last submission for IG tagging
   setState(ctx, { lastSubmission: { channelMessageId, at: Date.now() }, awaitingIg: false });
 
-  // 3) Acknowledge + ask tagging (non-fatal if these fail)
+  // 3) Acknowledge + ask tagging
   try { await ctx.reply('✔️ دریافت شد'); } catch (e) { console.warn('ack failed:', e.message); }
   try { await askTag(ctx); } catch (e) { console.warn('ask failed:', e.message); }
 });
@@ -78,10 +77,14 @@ bot.action('tag_yes', async (ctx) => {
   try { await ctx.answerCbQuery(); } catch {}
   setState(ctx, { awaitingIg: true });
   try {
-    await ctx.editMessageText('عالی! لطفاً آیدی اینستاگرام‌تان را ارسال کنید (مثال: @example).');
+    await ctx.editMessageText(
+      'عالی! لطفاً آیدی اینستاگرام‌تان را ارسال کنید (مثال: ' + '\u202A@example\u202C' + ').'
+    );
   } catch (e) {
     console.warn('editMessageText failed; sending new message:', e.message);
-    await ctx.reply('عالی! لطفاً آیدی اینستاگرام‌تان را ارسال کنید (مثال: @example).');
+    await ctx.reply(
+      'عالی! لطفاً آیدی اینستاگرام‌تان را ارسال کنید (مثال: ' + '\u202A@example\u202C' + ').'
+    );
   }
 });
 
@@ -115,12 +118,15 @@ bot.on('text', async (ctx) => {
   handle = handle.replace(/^https?:\/\/(www\.)?instagram\.com\//i, '').replace(/\/+$/g, '');
   if (!handle.startsWith('@')) handle = '@' + handle;
 
-  const ok = /^@[A-Za-z0-9._]{1,30}$/.test(handle);
-  if (!ok) return ctx.reply('فرمت آیدی درست نیست. لطفاً چیزی مثل @example ارسال کنید.');
+  // ✅ validate format and max length = 20
+  const ok = /^@[A-Za-z0-9._]{1,20}$/.test(handle);
+  if (!ok) return ctx.reply('فرمت آیدی درست نیست یا طول آن بیش از 20 کاراکتر است. لطفاً چیزی مثل @example ارسال کنید.');
 
   setState(ctx, { awaitingIg: false });
 
-  try { await ctx.reply(`متشکرم! آیدی شما ثبت شد: ${handle}`); } catch {}
+  try {
+    await ctx.reply(`متشکرم! آیدی شما ثبت شد: \u202A${handle}\u202C`);
+  } catch {}
 
   const sub = getState(ctx)?.lastSubmission;
   const link = sub?.channelMessageId ? linkForChannelMessage(TARGET, sub.channelMessageId) : '';
@@ -129,7 +135,7 @@ bot.on('text', async (ctx) => {
   try {
     await ctx.telegram.sendMessage(
       TARGET,
-      `🔖 تگ اینستاگرام: ${handle}\n👤 تلگرام: ${from}${link ? `\n🔗 ${link}` : ''}`
+      `🔖 تگ اینستاگرام: \u202A${handle}\u202C\n👤 تلگرام: ${from}${link ? `\n🔗 ${link}` : ''}`
     );
   } catch (e) {
     console.warn('channel IG note failed (non-fatal):', e.message);
