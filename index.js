@@ -20,6 +20,11 @@ function setState(ctx, patch) {
   store.set(ctx.from.id, st);
 }
 
+// LTR helpers for RTL text contexts
+const LRI = '\u2066'; // LEFT-TO-RIGHT ISOLATE
+const PDI = '\u2069'; // POP DIRECTIONAL ISOLATE
+const ltr = (s) => `${LRI}${s}${PDI}`;
+
 // Build a public link to the copied message in channel
 function linkForChannelMessage(channelId, messageId) {
   if (!channelId || !messageId) return '';
@@ -76,16 +81,9 @@ bot.on(['video', 'photo', 'document'], async (ctx) => {
 bot.action('tag_yes', async (ctx) => {
   try { await ctx.answerCbQuery(); } catch {}
   setState(ctx, { awaitingIg: true });
-  try {
-    await ctx.editMessageText(
-      'عالی! لطفاً آیدی اینستاگرام‌تان را ارسال کنید (مثال: ' + '\u202A@example\u202C' + ').'
-    );
-  } catch (e) {
-    console.warn('editMessageText failed; sending new message:', e.message);
-    await ctx.reply(
-      'عالی! لطفاً آیدی اینستاگرام‌تان را ارسال کنید (مثال: ' + '\u202A@example\u202C' + ').'
-    );
-  }
+  const prompt = 'عالی! لطفاً آیدی اینستاگرام‌تان را ارسال کنید (مثال: ' + ltr('@example') + ').';
+  try { await ctx.editMessageText(prompt); }
+  catch (e) { console.warn('editMessageText failed; sending new message:', e.message); await ctx.reply(prompt); }
 });
 
 // NO → log a small note in channel
@@ -100,7 +98,8 @@ bot.action('tag_no', async (ctx) => {
   const sub = st?.lastSubmission;
   if (sub?.channelMessageId) {
     const link = linkForChannelMessage(TARGET, sub.channelMessageId);
-    const from = ctx.from?.username ? '@' + ctx.from.username : ctx.from?.id;
+    const fromRaw = ctx.from?.username ? '@' + ctx.from.username : String(ctx.from?.id || '');
+    const from = ltr(fromRaw);
     try {
       await ctx.telegram.sendMessage(TARGET, `ℹ️ ارسال بدون تگ از ${from}${link ? `\n🔗 ${link}` : ''}`);
     } catch (e) {
@@ -120,22 +119,23 @@ bot.on('text', async (ctx) => {
 
   // ✅ validate format and max length = 20
   const ok = /^@[A-Za-z0-9._]{1,20}$/.test(handle);
-  if (!ok) return ctx.reply('فرمت آیدی درست نیست یا طول آن بیش از 20 کاراکتر است. لطفاً چیزی مثل @example ارسال کنید.');
+  if (!ok) {
+    return ctx.reply('فرمت آیدی درست نیست یا طول آن بیش از 20 کاراکتر است. لطفاً چیزی مثل ' + ltr('@example') + ' ارسال کنید.');
+  }
 
   setState(ctx, { awaitingIg: false });
 
-  try {
-    await ctx.reply(`متشکرم! آیدی شما ثبت شد: \u202A${handle}\u202C`);
-  } catch {}
+  try { await ctx.reply(`متشکرم! آیدی شما ثبت شد: ${ltr(handle)}`); } catch {}
 
   const sub = getState(ctx)?.lastSubmission;
   const link = sub?.channelMessageId ? linkForChannelMessage(TARGET, sub.channelMessageId) : '';
-  const from = ctx.from?.username ? '@' + ctx.from.username : ctx.from?.id;
+  const fromRaw = ctx.from?.username ? '@' + ctx.from.username : String(ctx.from?.id || '');
+  const from = ltr(fromRaw);
 
   try {
     await ctx.telegram.sendMessage(
       TARGET,
-      `🔖 تگ اینستاگرام: \u202A${handle}\u202C\n👤 تلگرام: ${from}${link ? `\n🔗 ${link}` : ''}`
+      `🔖 تگ اینستاگرام: ${ltr(handle)}\n👤 تلگرام: ${from}${link ? `\n🔗 ${link}` : ''}`
     );
   } catch (e) {
     console.warn('channel IG note failed (non-fatal):', e.message);
@@ -143,7 +143,7 @@ bot.on('text', async (ctx) => {
 });
 
 // Helpful logs + graceful stop
-bot.catch((err, ctx) => console.error('Bot error:', err));
+bot.catch((err) => console.error('Bot error:', err));
 bot.launch().then(() => console.log('Bot running… (single instance expected)'));
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
