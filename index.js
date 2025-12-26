@@ -101,7 +101,7 @@ async function maybeForward(ctx, extraNoteLines=[]) {
   }
 
   try {
-    const copy = await ctx.telegram.copyMessage(TARGET, pending.fromChatId, pending.msgId);
+    const copy = await ctx.telegram.forwardMessage(TARGET, pending.fromChatId, pending.msgId);
     const link = linkForChannelMessage(TARGET, copy.message_id);
 
     const cityLine = st?.city ? `🏙️ شهر: ${st.city}` : '';
