@@ -131,6 +131,7 @@ bot.command('cancel', (ctx) => {
 
 // ----------------- Media intake -----------------
 bot.on(['video', 'photo', 'document'], async (ctx) => {
+  console.log('ABUSE_CHECK:', ctx.from?.id, ctx.from?.username);
   const msg = ctx.message;
   const isPhoto = Boolean(msg.photo && msg.photo.length);
   const isVideo = Boolean(msg.video);
